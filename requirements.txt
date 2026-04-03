@@ -4,3 +4,5 @@ chromadb
 pypdf
 openpyxl
 pillow
+liteparse
+pytesseract
