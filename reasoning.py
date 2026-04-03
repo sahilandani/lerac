@@ -1,107 +1,89 @@
 import os
 from groq import Groq
 
-# Initialize Groq client using environment variable
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 # -------------------------------
-# Resolve conflicts + generate answer
+# Safe client initializer
 # -------------------------------
-def resolve_conflicts_and_reason(chunks, query):
-    if not chunks:
-        return "No relevant data found."
+def get_client():
+    api_key = os.environ.get("GROQ_API_KEY")
 
-    context = "\n\n".join([c["content"] for c in chunks])
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not set in environment variables")
 
-    prompt = f"""
-You are an AI assistant helping SMEs.
-
-Rules:
-- Use ONLY the provided context
-- If multiple sources conflict, explain both clearly
-- Do NOT hallucinate
-- Be concise and structured
-
-Context:
-{context}
-
-Question:
-{query}
-"""
-
-    try:
-        response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-        return response.choices[0].message.content.strip()
-
-    except Exception as e:
-        return f"Error generating answer: {str(e)}"
+    return Groq(api_key=api_key)
 
 
 # -------------------------------
 # Intent classification
 # -------------------------------
 def classify_intent(query):
-    prompt = f"""
-Classify the user query into ONE category:
+    q = query.lower()
 
-Options:
-- Pricing
-- Policy
-- Communication
-- General
-
-Return ONLY the category name.
-
-Query: {query}
-"""
-
-    try:
-        response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        return response.choices[0].message.content.strip()
-
-    except Exception:
+    if any(word in q for word in ["price", "cost", "charge", "fee"]):
+        return "Pricing"
+    elif any(word in q for word in ["policy", "rule", "refund"]):
+        return "Policy"
+    elif any(word in q for word in ["email", "message", "conversation"]):
+        return "Communication"
+    else:
         return "General"
 
 
 # -------------------------------
-# Supporting snippets finder
+# Find supporting snippets
 # -------------------------------
-def find_supporting_snippets(chunks, query):
-    if not chunks:
-        return []
+def find_supporting_snippets(chunks):
+    snippets = []
 
-    context = "\n\n".join([c["content"] for c in chunks])
+    for c in chunks:
+        snippets.append(
+            f"[{c.get('source_name', 'unknown')}] {c.get('content', '')[:200]}"
+        )
+
+    return "\n".join(snippets)
+
+
+# -------------------------------
+# Main reasoning function
+# -------------------------------
+def resolve_conflicts_and_reason(chunks, query):
+    try:
+        client = get_client()
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
+    context = "\n\n".join(
+        f"Source: {c.get('source_name')}\nContent: {c.get('content')}"
+        for c in chunks
+    )
 
     prompt = f"""
-From the context below, extract the most relevant supporting lines
-that help answer the question.
+You are an intelligent assistant.
 
-Return 3–5 short bullet points.
-
-Context:
-{context}
+Answer the question based ONLY on the provided sources.
+If there are conflicting answers, analyze and resolve them logically.
 
 Question:
 {query}
+
+Sources:
+{context}
+
+Give a clear final answer.
 """
 
     try:
         response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2
+            model="llama3-70b-8192",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
         )
 
-        text = response.choices[0].message.content.strip()
-        return text.split("\n")
+        return response.choices[0].message.content.strip()
 
-    except Exception:
-        return []
+    except Exception as e:
+        return f"❌ LLM Error: {str(e)}"
