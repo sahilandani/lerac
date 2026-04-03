@@ -1,0 +1,6 @@
+streamlit
+groq
+chromadb
+pypdf
+openpyxl
+pillow
